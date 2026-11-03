@@ -457,8 +457,18 @@ public class OperatingSystem {
    */
   private static class MacOSXFileManager {
     public static String getApplicationSupportFolder() throws IOException {
-      // Find application support folder (0x61737570) for user domain (-32763)
-      return FileManager.findFolder((short)-32763, 0x61737570);
+      try {
+        // Find application support folder (0x61737570) for user domain (-32763)
+        return FileManager.findFolder((short)-32763, 0x61737570);
+      } catch (RuntimeException ex) {
+        // com.apple.eio.FileManager may be the unimplemented compile-time stub
+        // (AppleJavaExtensions.jar) or unavailable on recent JDKs
+      } catch (LinkageError ex) {
+        // Same as above when the class can't be loaded at all
+      }
+      // Fall back to the standard location of the user Application Support folder
+      return new File(System.getProperty("user.home"),
+          "Library" + File.separator + "Application Support").getPath();
     }
   }
 }
