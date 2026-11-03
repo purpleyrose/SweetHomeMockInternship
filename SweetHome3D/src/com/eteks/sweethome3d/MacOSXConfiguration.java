@@ -27,7 +27,6 @@ import java.awt.Frame;
 import java.awt.GradientPaint;
 import java.awt.Graphics;
 import java.awt.Graphics2D;
-import java.awt.Desktop;
 import java.awt.Image;
 import java.awt.Insets;
 import java.awt.Point;
@@ -38,11 +37,7 @@ import java.awt.event.WindowAdapter;
 import java.awt.event.WindowEvent;
 import java.awt.event.WindowStateListener;
 import java.io.IOException;
-import java.io.File;
-import java.lang.reflect.InvocationHandler;
 import java.lang.reflect.InvocationTargetException;
-import java.lang.reflect.Method;
-import java.lang.reflect.Proxy;
 import java.util.List;
 import java.util.concurrent.Executors;
 import java.util.concurrent.atomic.AtomicBoolean;
@@ -99,144 +94,14 @@ import com.sun.j3d.exp.swing.JCanvas3D;
 class MacOSXConfiguration {
   private static boolean fullScreen;
 
-  private MacOSXConfiguration() {
-  }
-
-  /**
-   * Binds About, Preferences, Quit and Open files of Mac OS X application menu
-   * with <code>java.awt.Desktop</code> handlers available from Java 9,
-   * called by reflection to keep compatibility with older Java versions.
-   */
-  private static void bindToDesktopHandlers(final SweetHome3D homeApplication) {
-    try {
-      if (!Desktop.isDesktopSupported()) {
-        return;
-      }
-      final Desktop desktop = Desktop.getDesktop();
-      setDesktopHandler(desktop, "setAboutHandler", "java.awt.desktop.AboutHandler",
-          new DesktopHandlerCallback() {
-            public void handle(Object [] args) {
-              HomeController controller = getActiveHomeController(homeApplication);
-              if (controller != null) {
-                controller.about();
-              }
-            }
-          });
-      setDesktopHandler(desktop, "setPreferencesHandler", "java.awt.desktop.PreferencesHandler",
-          new DesktopHandlerCallback() {
-            public void handle(Object [] args) {
-              HomeController controller = getActiveHomeController(homeApplication);
-              if (controller != null) {
-                controller.editPreferences();
-              }
-            }
-          });
-      setDesktopHandler(desktop, "setQuitHandler", "java.awt.desktop.QuitHandler",
-          new DesktopHandlerCallback() {
-            public void handle(Object [] args) throws Exception {
-              HomeController controller = getActiveHomeController(homeApplication);
-              if (controller != null) {
-                // Let the controller propose to save modified homes
-                controller.exit();
-              }
-              if (homeApplication.getHomes().isEmpty()) {
-                System.exit(0);
-              } else {
-                // User cancelled the exit
-                Class.forName("java.awt.desktop.QuitResponse").getMethod("cancelQuit").invoke(args [1]);
-              }
-            }
-          });
-      setDesktopHandler(desktop, "setOpenFileHandler", "java.awt.desktop.OpenFilesHandler",
-          new DesktopHandlerCallback() {
-            public void handle(Object [] args) throws Exception {
-              List<?> files = (List<?>)Class.forName("java.awt.desktop.FilesEvent")
-                  .getMethod("getFiles").invoke(args [0]);
-              for (Object file : files) {
-                homeApplication.start(new String [] {"-open", ((File)file).getAbsolutePath()});
-              }
-            }
-          });
-    } catch (Exception | LinkageError ex) {
-      // Desktop handlers aren't available (Java < 9): keep default application menu
-    }
-  }
-
-  /**
-   * Callback run on Event Dispatch Thread by a <code>java.awt.Desktop</code> handler.
-   */
-  private interface DesktopHandlerCallback {
-    void handle(Object [] args) throws Exception;
-  }
-
-  private static void setDesktopHandler(Desktop desktop, String setterName,
-                                        String handlerInterfaceName,
-                                        final DesktopHandlerCallback callback) throws Exception {
-    Class<?> handlerInterface = Class.forName(handlerInterfaceName);
-    Object handler = Proxy.newProxyInstance(handlerInterface.getClassLoader(),
-        new Class<?> [] {handlerInterface}, new InvocationHandler() {
-          public Object invoke(final Object proxy, Method method, final Object [] args) {
-            if (method.getDeclaringClass() == Object.class) {
-              if ("equals".equals(method.getName())) {
-                return proxy == args [0];
-              } else if ("hashCode".equals(method.getName())) {
-                return System.identityHashCode(proxy);
-              } else {
-                return "SweetHome3D " + handlerInterfaceName;
-              }
-            }
-            Runnable runnable = new Runnable() {
-                public void run() {
-                  try {
-                    callback.handle(args);
-                  } catch (Exception ex) {
-                    ex.printStackTrace();
-                  }
-                }
-              };
-            if (EventQueue.isDispatchThread()) {
-              runnable.run();
-            } else {
-              EventQueue.invokeLater(runnable);
-            }
-            return null;
-          }
-        });
-    Desktop.class.getMethod(setterName, handlerInterface).invoke(desktop, handler);
-  }
-
-  /**
-   * Returns the controller of the active home frame, or of the first home if none is active.
-   */
-  private static HomeController getActiveHomeController(SweetHome3D homeApplication) {
-    Home firstHome = null;
-    for (Home home : homeApplication.getHomes()) {
-      JFrame homeFrame = homeApplication.getHomeFrame(home);
-      if (homeFrame != null && homeFrame.isActive()) {
-        return homeApplication.getHomeFrameController(home).getHomeController();
-      }
-      if (firstHome == null) {
-        firstHome = home;
-      }
-    }
-    return firstHome != null
-        ? homeApplication.getHomeFrameController(firstHome).getHomeController()
-        : null;
+  private MacOSXConfiguration() {    
   }
   
   /**
    * Binds <code>homeApplication</code> to Mac OS X application menu.
    */
   public static void bindToApplicationMenu(final SweetHome3D homeApplication) {
-    final Application macosxApplication;
-    try {
-      macosxApplication = Application.getApplication();
-    } catch (RuntimeException | LinkageError ex) {
-      // com.apple.eawt is unavailable (unimplemented AppleJavaExtensions stub on the classpath,
-      // or recent JDK where it isn't accessible): use java.awt.Desktop handlers instead
-      bindToDesktopHandlers(homeApplication);
-      return;
-    }
+    final Application macosxApplication = Application.getApplication();
     // Create a default controller for an empty home and disable unrelated actions
     final HomeController defaultController = 
         homeApplication.createHomeFrameController(homeApplication.createHome()).getHomeController();
@@ -757,7 +622,7 @@ class MacOSXConfiguration {
                 };
               FullScreenUtilities.addFullScreenListenerTo((Window)SwingUtilities.getRoot(rootPane), 
                   (FullScreenListener)this.fullScreenListener);
-            } catch (ClassNotFoundException | RuntimeException | LinkageError ex) {
+            } catch (ClassNotFoundException ex) {
               // If FullScreenUtilities isn't supported, ignore mouse listener switch
             }
           }
@@ -771,7 +636,7 @@ class MacOSXConfiguration {
               Class fullScreenUtilitiesClass = Class.forName("com.apple.eawt.FullScreenUtilities");
               FullScreenUtilities.removeFullScreenListenerFrom((Window)SwingUtilities.getRoot(rootPane), 
                   (FullScreenListener)this.fullScreenListener);
-            } catch (ClassNotFoundException | RuntimeException | LinkageError ex) {
+            } catch (ClassNotFoundException ex) {
               // If FullScreenUtilities isn't supported, ignore mouse listener switch
             }
           }
